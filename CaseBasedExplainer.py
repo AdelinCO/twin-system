@@ -16,23 +16,7 @@ from sklearn.neighbors import KDTree
 
 
 class CaseBasedExplainer():
-    """
-    Parameters
-    ----------
     
-    model
-        The model from wich we want to obtain explanations
-    case_dataset
-        The dataset used to train the model
-    batch_size
-        Default = 16
-    distance_function
-        The function to calcul the distance between two point.
-        (Can use : euclidean, manhattan, minkowski etc...)
-    weights_extraction_function
-        The function to calcul the weight of every features, many type of methode can be use but it will depend of
-        what type of dataset you've got.
-    """
 
     def __init__(self,
             model: Callable,
@@ -40,7 +24,24 @@ class CaseBasedExplainer():
             batch_size: Optional[int] = 16,
             distance_function: DistanceMetric = None,
             weights_extraction_function: Callable = None):
+        
+        """
+        Parameters
+        ----------
 
+        model
+            The model from wich we want to obtain explanations
+        case_dataset
+            The dataset used to train the model
+        batch_size
+            Default = 16
+        distance_function
+            The function to calcul the distance between two point.
+            (Can use : euclidean, manhattan, minkowski etc...)
+        weights_extraction_function
+            The function to calcul the weight of every features, many type of methode can be use but it will depend of
+            what type of dataset you've got.
+        """
         self.model = model
         self.batch_size = batch_size
         self.case_dataset = case_dataset
@@ -59,7 +60,6 @@ class CaseBasedExplainer():
                 k: int = 1):
         
         """
-        
         Parameters
         ----------
         inputs
@@ -84,7 +84,6 @@ class CaseBasedExplainer():
             
         weight
             ...
-        
         """
         # (n, H, W, D)
         self.inputs = inputs
@@ -94,7 +93,8 @@ class CaseBasedExplainer():
         weighted_inputs = tf.reshape(weighted_inputs, [weighted_inputs.shape[0], -1])
         dist , ind = self.Knn.query(weighted_inputs, k = k)
         
-        ind =  np.unique(ind)
+        #ind =  np.unique(ind)
+        ind = ind[0]
         dist = np.unique(dist)
         
         return dist, ind, weight
@@ -149,7 +149,7 @@ class CaseBasedExplainer():
             if j == 0:
                 plt.title('Original image\nGT: '+str(labels_test[indice_original])+'\npredict: '+ str(pred_img))
             else:
-                plt.title('K-nearest neighbours\nGT: '+str(labels_train[ind[j-1]])+'\npredict: '+ str(pred_img))
+                plt.title('K-nearest neighbours\nGT: '+str(labels_train[ind[j-1]])+'\npredict: '+ str(pred_img)+ '\ndistance: '+ str(round(dist[j-1],2)))
             plt.imshow(explains[j],cmap = 'gray')
             plt.axis("off")
             ax2 = fig.add_subplot(gs[1,j])
@@ -157,7 +157,6 @@ class CaseBasedExplainer():
             plt.imshow(_standardize_image(weight_tab[j], clip_percentile),cmap = "coolwarm", alpha = 0.5)
             plt.axis("off")
         plt.show()
-
 
 class CosineDistanceFunction(DistanceMetric):
 
