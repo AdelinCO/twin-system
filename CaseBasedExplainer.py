@@ -16,15 +16,26 @@ from sklearn.neighbors import KDTree
 
 
 class CaseBasedExplainer():
+    """
+    TODO
     
+    Used to compute the Case Based Explainer sytem, a twins sytem that use ANN and KNN with
+    the same dataset.
+    
+    Ref. Twin-Systems to Explain Artificial Neural Networks using Case-Based Reasoning:
+            Comparative Tests of Feature-Weighting Methods in ANN-CBR Twins for XAI.
+            Eoin M. Kenny and Mark T. Keane.
+            
+    """
 
     def __init__(self,
-            model: Callable,
-            case_dataset: Union[tf.data.Dataset, tf.Tensor, np.ndarray],
-            batch_size: Optional[int] = 16,
-            distance_function: DistanceMetric = None,
-            weights_extraction_function: Callable = None):
-        
+                 model: Callable,
+                 case_dataset: Union[tf.data.Dataset, tf.Tensor, np.ndarray],
+                 targets: Union[tf.Tensor, np.ndarray],
+                 batch_size: Optional[int] = 16,
+                 distance_function: DistanceMetric = None,
+                 weights_extraction_function: Callable = None,
+                 k: Optional[int] = 3):
         """
         Parameters
         ----------
@@ -32,129 +43,174 @@ class CaseBasedExplainer():
         model
             The model from wich we want to obtain explanations
         case_dataset
-            The dataset used to train the model
+            The dataset used to train the model, also use by the function to calcul the closest examples.
+        targets
+            labels predict by the model from the dataset
         batch_size
+            Number of pertubed samples to explain at once.
             Default = 16
         distance_function
-            The function to calcul the distance between two point.
+            The function to calcul the distance between the inputs and all the dataset.
             (Can use : euclidean, manhattan, minkowski etc...)
         weights_extraction_function
             The function to calcul the weight of every features, many type of methode can be use but it will depend of
             what type of dataset you've got.
+        k
+            Represante how many nearest neighbours you want to be return.
         """
+        # set attributes
         self.model = model
         self.batch_size = batch_size
         self.case_dataset = case_dataset
-        self.weighted_extraction_function = weights_extraction_function
-        y_pred = model.predict(case_dataset)
-        case_dataset_weight = self.weighted_extraction_function(case_dataset, y_pred)
+        self.weights_extraction_function = weights_extraction_function
+        self.k = k
+        
+        # compute case dataset weights (used in distance)
+        # the weight extraction function may need the prediction to extract the weights
+        case_dataset_weight = self.weights_extraction_function(case_dataset, targets)
         case_dataset_weight = np.expand_dims(case_dataset_weight, 3)
         self.case_dataset_weight = case_dataset_weight
+
+        # apply weights to the case dataset
         weighted_case_dataset = tf.math.multiply(case_dataset_weight, case_dataset)
+        # flatten features for kdtree
         weighted_case_dataset = tf.reshape(weighted_case_dataset, [weighted_case_dataset.shape[0], -1])
+
+        # create kdtree instance with weighted case dataset
+        # will be called to estimate closest examples
         self.Knn = KDTree(weighted_case_dataset, metric = 'euclidean')
 
     def explain(self,
                 inputs: Union[tf.Tensor, np.ndarray],
-                targets: Union[tf.Tensor, np.ndarray]= None,
-                k: int = 1):
-        
+                targets: Union[tf.Tensor, np.ndarray] = None):
         """
         Parameters
         ----------
         inputs
-            Tensor or Array. Input sapmples to be explained.
+            Tensor or Array. Input samples to be explained.
             Expected shape among (N,T,W), (N,W,H,C).
-        
-        target
+        targets
             Tensor or Array. Corresponding to the prediction of the samples by the model.
             shape: (n, nb_classes)
+            Used by the `weights_extraction_function` if it is an Xplique attribution function,
+            For more details, please refer to the explain methods documentation   
             
-        K
-            Represante how many nearest neighbours you want to be return.
-        
         Returns
         -------
-        
-        dist
-            distance between the input and the k-nearest_neighbours, represented by a float.
-            
-        ind 
-            The index of the k-nearest_neighbours in the dataset.
-            
+        examples 
+            Represente the K nearust neighbours of the input.
+        distance
+            distance between the input and the examples.
         weight
-            ...
+            features weight of the inputs
         """
-        # (n, H, W, D)
-        self.inputs = inputs
-        weight = self.weighted_extraction_function(inputs, targets)
-        weight = np.expand_dims(weight, 3)
-        weighted_inputs = tf.math.multiply(weight, inputs)
+        # compute weight (used in distance)
+        # the weight extraction function may need the prediction to extract the weights
+        weights = self.weights_extraction_function(inputs, targets)
+        weights = np.expand_dims(weights, 3)
+        
+        # apply weights to the inputs
+        weighted_inputs = tf.math.multiply(weights, inputs)
+        # flatten features for knn query
         weighted_inputs = tf.reshape(weighted_inputs, [weighted_inputs.shape[0], -1])
-        dist , ind = self.Knn.query(weighted_inputs, k = k)
         
-        #ind =  np.unique(ind)
-        ind = ind[0]
-        dist = np.unique(dist)
+        # kdtree instance call with knn.query,
+        # call with the weighted inputs and the number of closest examples (k)
+        examples_distance , examples_indice = self.Knn.query(weighted_inputs, k = self.k)
         
-        return dist, ind, weight
+        # extraction of the examples by their indice
+        self.examples_indice = examples_indice[0]
+        examples = []
+        for i in self.examples_indice:
+            examples.append(self.case_dataset[i])
+        
+        # TODO
+        examples_distance = examples_distance[0]
+        
+        return examples, examples_distance, weights
     
     
     def showResult(self,
-                    ind: int,
-                    dist: float,
-                    weight: np.ndarray,
-                    indice_original: int,
-                    labels_train: np.ndarray,
-                    labels_test: np.ndarray):
+                   inputs: Union[tf.Tensor, np.ndarray],
+                   dist: float,
+                   weight: np.ndarray,
+                   indice_original: int,
+                   labels_train: np.ndarray,
+                   labels_test: np.ndarray,
+                   clip_percentile: Optional[float] = 0.2,
+                   cmapimages: Optional[str] = "gray",
+                   cmapexplanation: Optional[str] = "coolwarm",
+                   alpha: Optional[float] = 0.5):
         """
         Parameters
         ---------
-        ind
-            Represente the number of the indice of data in the train dataset
-            
-        dist
-            Represente the distance between input data and the K-nearest_neighbours
-            
+        inputs
+            Tensor or Array. Input samples to be show next to examples.
+            Expected shape among (N,T,W), (N,W,H,C).
+        distance
+            Distance between input data and examples.    
         weight
-            ...
-        
+            features weight of the inputs 
         indice_original
-            Represente the number of the indice of the inputs to show the true labels
-        
+            Represente the indice of the inputs to show the true labels
         labels_train
-            Corresponding to the train labels dataset
-            
-        lables_test
+            Corresponding to the train labels dataset   
+        labels_test
             Corresponding to the test labels dataset
-            
-        """
-        explains = self.inputs
-        weight_tab = weight
-        for i in ind:
-            case_dataset = np.expand_dims(self.case_dataset[i],0)
-            case_dataset_weight = np.expand_dims(self.case_dataset_weight[i], 0)
-            explains = tf.concat([explains,case_dataset], axis = 0)
-            weight_tab = tf.concat([weight_tab, case_dataset_weight], axis = 0)
-        clip_percentile = 0.2
+        clip_percentile
+            Percentile value to use if clipping is needed, e.g a value of 1 will perform a clipping
+            between percentile 1 and 99. This parameter allows to avoid outliers  in case of too extreme values.
+        cmapimages
+            For images.
+            The Colormap instance or registered colormap name used to map scalar data to colors.
+            This parameter is ignored for RGB(A) data.
+        cmapexplanation
+            For explanation.
+            The Colormap instance or registered colormap name used to map scalar data to colors.
+            This parameter is ignored for RGB(A) data.
+        alpha
+            The alpha blending value, between 0 (transparent) and 1 (opaque).
+            If alpha is an array, the alpha blending values are applied pixel by pixel, 
+            and alpha must have the same shape as X.
+        """ 
+        
+        # Initialize 'input_and_examples' and 'corresponding_weights' that they
+        # will be use to show every closest examples and the explanation
+        input_and_examples = [inputs]
+        corresponding_weights = [weight]
+        # list creation of the examples and weights
+        for i in self.examples_indice:
+            example = tf.expand_dims(self.case_dataset[i], 0)
+            example_weights = tf.expand_dims(self.case_dataset_weight[i], 0)
+            input_and_examples.append(example)
+            corresponding_weights.append(example_weights)
+        # concatanation of those list
+        input_and_examples = tf.concat(input_and_examples, axis = 0)
+        corresponding_weights = tf.concat(corresponding_weights, axis = 0)
+        
+        # calcul the prediction of input and examples 
+        # that they will be used at title of the image
+        predictions = self.model.predict(input_and_examples)
+        predicted_labels = tf.argmax(predictions, axis = 1)
+
+        # configure the grid to show all results
         plt.rcParams["figure.autolayout"] = True
         plt.rcParams["figure.figsize"] = [25, 6]
         fig = plt.figure()
-        gs = fig.add_gridspec(2, len(explains)*2)
-        for j in  range(len(explains)):
-            ax = fig.add_subplot(gs[0,j])
-            pred_img = np.expand_dims(explains[j], 0)
-            pred_img = self.model.predict(pred_img)
-            pred_img = np.argmax(pred_img)
+        gs = fig.add_gridspec(2, len(input_and_examples) * 2)
+        
+        # loop to organize and show all results
+        for j in  range(len(input_and_examples)):
+            ax = fig.add_subplot(gs[0, j])
             if j == 0:
-                plt.title('Original image\nGT: '+str(labels_test[indice_original])+'\npredict: '+ str(pred_img))
+                plt.title(f'Original image\nGround Truth: {labels_test[indice_original]}\nPredict: {predicted_labels[j]}')
             else:
-                plt.title('K-nearest neighbours\nGT: '+str(labels_train[ind[j-1]])+'\npredict: '+ str(pred_img)+ '\ndistance: '+ str(round(dist[j-1],2)))
-            plt.imshow(explains[j],cmap = 'gray')
+                plt.title(f'K-nearest neighbours\nGround Truth: {labels_train[self.examples_indice[j-1]]}\nPredict: {predicted_labels[j]}')
+            plt.imshow(input_and_examples[j], cmap = cmapimages)
             plt.axis("off")
-            ax2 = fig.add_subplot(gs[1,j])
-            plt.imshow(explains[j], cmap = "gray")
-            plt.imshow(_standardize_image(weight_tab[j], clip_percentile),cmap = "coolwarm", alpha = 0.5)
+            ax2 = fig.add_subplot(gs[1, j])
+            plt.imshow(input_and_examples[j], cmap = cmapimages)
+            plt.imshow(_standardize_image(corresponding_weights[j], clip_percentile), cmap = cmapexplanation, alpha = alpha)
             plt.axis("off")
         plt.show()
 
