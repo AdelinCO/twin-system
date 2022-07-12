@@ -31,7 +31,8 @@ class CaseBasedExplainer():
     def __init__(self,
                  model: Callable,
                  case_dataset: Union[tf.data.Dataset, tf.Tensor, np.ndarray],
-                 targets: Union[tf.Tensor, np.ndarray],
+                 labels_train: np.ndarray,
+                 targets: Optional[Union[tf.Tensor, np.ndarray]] = None,
                  batch_size: Optional[int] = 16,
                  distance_function: DistanceMetric = None,
                  weights_extraction_function: Callable = None,
@@ -55,6 +56,10 @@ class CaseBasedExplainer():
         weights_extraction_function
             The function to calcul the weight of every features, many type of methode can be use but it will depend of
             what type of dataset you've got.
+            examples:
+                def my_function(inputs, targets):
+                    # outputs.shape == inputs.shape
+                    return outputs
         k
             Represante how many nearest neighbours you want to be return.
         """
@@ -63,15 +68,22 @@ class CaseBasedExplainer():
         self.batch_size = batch_size
         self.case_dataset = case_dataset
         self.weights_extraction_function = weights_extraction_function
-        self.k = k
+        self.k_neighbors = k
+        self.labels_train = labels
         
+        # have to put targets.all() if you put an argument to the function
+        if targets is None:
+            targets = model(case_dataset)
+            targets = tf.argmax(targets, axis=1)
+            targets = tf.one_hot(targets, nb_classes)
+            
         # compute case dataset weights (used in distance)
-        # the weight extraction function may need the prediction to extract the weights
+        # the weight extraction function may need the predictions to extract the weights
         case_dataset_weight = self.weights_extraction_function(case_dataset, targets)
-        case_dataset_weight = np.expand_dims(case_dataset_weight, 3)
+        case_dataset_weight = tf.expand_dims(case_dataset_weight, 3)
         self.case_dataset_weight = case_dataset_weight
 
-        # apply weights to the case dataset
+        # apply weights to the case dataset (weighted distance)
         weighted_case_dataset = tf.math.multiply(case_dataset_weight, case_dataset)
         # flatten features for kdtree
         weighted_case_dataset = tf.reshape(weighted_case_dataset, [weighted_case_dataset.shape[0], -1])
@@ -79,7 +91,31 @@ class CaseBasedExplainer():
         # create kdtree instance with weighted case dataset
         # will be called to estimate closest examples
         self.Knn = KDTree(weighted_case_dataset, metric = 'euclidean')
+        print(weighted_case_dataset.shape)
 
+        
+    def extract_element_from_indices(self,
+                                     inputs: Union[tf.Tensor, np.ndarray],
+                                     labels_train: np.ndarray,
+                                     examples_indice: np.ndarray):
+        all_examples = []
+        all_weight_examples = []
+        for sample_examples_indice in examples_indice:
+            sample_examples = []
+            weight_ex = []
+            for indice in sample_examples_indice:
+                sample_examples.append(self.case_dataset[indice])
+                weight_ex.append(self.case_dataset_weight[indice])
+            # (k, h, w, 1)
+            all_examples.append(tf.stack(sample_examples, axis=0))
+            all_weight_examples.append(tf.stack(weight_ex, axis=0))
+        # (n, k, h, w, 1)
+        examples = tf.stack(all_examples, axis=0)
+        weights_examples = tf.stack(all_weight_examples, axis=0)
+
+        return examples, weights_examples
+        
+        
     def explain(self,
                 inputs: Union[tf.Tensor, np.ndarray],
                 targets: Union[tf.Tensor, np.ndarray] = None):
@@ -104,43 +140,46 @@ class CaseBasedExplainer():
         weight
             features weight of the inputs
         """
+        # have to put targets.all() if you put an argument to the function
+        if targets is None:
+            targets = self.model(inputs)
+            targets = tf.argmax(targets, axis=1)
+            targets = tf.one_hot(targets, nb_classes)
+    
         # compute weight (used in distance)
         # the weight extraction function may need the prediction to extract the weights
-        weights = self.weights_extraction_function(inputs, targets)
-        weights = np.expand_dims(weights, 3)
+        inputs_weights = self.weights_extraction_function(inputs, targets)
+        if inputs_weights.shape != inputs.shape:
+            inputs_weights = tf.reshape(inputs_weights, inputs.shape)
+        # weights = tf.expand_dims(weights, 3)
         
         # apply weights to the inputs
-        weighted_inputs = tf.math.multiply(weights, inputs)
+        weighted_inputs = tf.math.multiply(inputs_weights, inputs)
         # flatten features for knn query
         weighted_inputs = tf.reshape(weighted_inputs, [weighted_inputs.shape[0], -1])
         
         # kdtree instance call with knn.query,
         # call with the weighted inputs and the number of closest examples (k)
-        examples_distance , examples_indice = self.Knn.query(weighted_inputs, k = self.k)
-        
-        # extraction of the examples by their indice
-        self.examples_indice = examples_indice[0]
-        examples = []
-        for i in self.examples_indice:
-            examples.append(self.case_dataset[i])
-        
-        # TODO
-        examples_distance = examples_distance[0]
-        
-        return examples, examples_distance, weights
-    
-    
-    def showResult(self,
-                   inputs: Union[tf.Tensor, np.ndarray],
-                   dist: float,
-                   weight: np.ndarray,
-                   indice_original: int,
-                   labels_train: np.ndarray,
-                   labels_test: np.ndarray,
-                   clip_percentile: Optional[float] = 0.2,
-                   cmapimages: Optional[str] = "gray",
-                   cmapexplanation: Optional[str] = "coolwarm",
-                   alpha: Optional[float] = 0.5):
+        examples_distance, examples_indice = self.Knn.query(weighted_inputs, k = self.k_neighbors)
+      
+        # call the extract_element_from_indices function    
+        examples, examples_weights = self.extract_element_from_indices(inputs, self.labels_train, examples_indice)
+            
+        return examples, examples_distance, examples_weights, inputs_weights
+
+    def show_Result(self,
+                    inputs: Union[tf.Tensor, np.ndarray],
+                    examples: Union[tf.Tensor, np.ndarray],
+                    dist: float,
+                    inputs_weights: np.ndarray,
+                    weights_examples: np.ndarray,
+                    indice_original: int,
+                    labels_train: np.ndarray,
+                    labels_test: np.ndarray,
+                    clip_percentile: Optional[float] = 0.2,
+                    cmapimages: Optional[str] = "gray",
+                    cmapexplanation: Optional[str] = "coolwarm",
+                    alpha: Optional[float] = 0.5):
         """
         Parameters
         ---------
@@ -174,45 +213,50 @@ class CaseBasedExplainer():
             and alpha must have the same shape as X.
         """ 
         
+        # for a, b, c in zip(as, bs, cs):
+        #     show_one_result
+        
         # Initialize 'input_and_examples' and 'corresponding_weights' that they
         # will be use to show every closest examples and the explanation
-        input_and_examples = [inputs]
-        corresponding_weights = [weight]
-        # list creation of the examples and weights
-        for i in self.examples_indice:
-            example = tf.expand_dims(self.case_dataset[i], 0)
-            example_weights = tf.expand_dims(self.case_dataset_weight[i], 0)
-            input_and_examples.append(example)
-            corresponding_weights.append(example_weights)
-        # concatanation of those list
-        input_and_examples = tf.concat(input_and_examples, axis = 0)
-        corresponding_weights = tf.concat(corresponding_weights, axis = 0)
-        
+        inputs = tf.expand_dims(inputs, 1)
+        inputs_weights = tf.expand_dims(inputs_weights, 1)        
+        input_and_examples = tf.concat([inputs, examples], axis=1)
+        corresponding_weights = tf.concat([inputs_weights, weights_examples], axis=1)
+
         # calcul the prediction of input and examples 
         # that they will be used at title of the image
-        predictions = self.model.predict(input_and_examples)
-        predicted_labels = tf.argmax(predictions, axis = 1)
-
+        # nevessary loop becaue we have n * k elements
+        predicted_labels = []
+        for samples in input_and_examples:
+            predicted = self.model(samples)
+            predicted = tf.argmax(predicted, axis=1)
+            predicted_labels.append(predicted)
+            
         # configure the grid to show all results
         plt.rcParams["figure.autolayout"] = True
-        plt.rcParams["figure.figsize"] = [25, 6]
-        fig = plt.figure()
-        gs = fig.add_gridspec(2, len(input_and_examples) * 2)
+        plt.rcParams["figure.figsize"] = [20, 10]
         
-        # loop to organize and show all results
-        for j in  range(len(input_and_examples)):
-            ax = fig.add_subplot(gs[0, j])
-            if j == 0:
-                plt.title(f'Original image\nGround Truth: {labels_test[indice_original]}\nPredict: {predicted_labels[j]}')
-            else:
-                plt.title(f'K-nearest neighbours\nGround Truth: {labels_train[self.examples_indice[j-1]]}\nPredict: {predicted_labels[j]}')
-            plt.imshow(input_and_examples[j], cmap = cmapimages)
-            plt.axis("off")
-            ax2 = fig.add_subplot(gs[1, j])
-            plt.imshow(input_and_examples[j], cmap = cmapimages)
-            plt.imshow(_standardize_image(corresponding_weights[j], clip_percentile), cmap = cmapexplanation, alpha = alpha)
-            plt.axis("off")
-        plt.show()
+        
+        #loop to organize and show all results
+        for j in range(np.asarray(input_and_examples).shape[0]):
+            fig = plt.figure()
+            gs = fig.add_gridspec(2, self.k_neighbors + 1)
+            #gs = fig.add_gridspec(len(input_and_examples) * 10, len(input_and_examples) * 10)
+            for k in range(len(input_and_examples[j])):
+                ax = fig.add_subplot(gs[0, k])
+                if k == 0:
+                    plt.title(f'Original image\nGround Truth: {labels_test[indice_original[j]]}\nPredict: {predicted_labels[j][k]}')
+                else:
+                    #plt.title(f'K-nearest neighbours\nGround Truth: {labels_train[self.examples_indice[j-1]]}\nPredict: {predicted_labels[j]}')
+                    plt.title(f'K-nearest neighbours\nPredict: {predicted_labels[j][k]}')
+                plt.imshow(input_and_examples[j][k], cmap = cmapimages)
+                plt.axis("off")
+                ax2 = fig.add_subplot(gs[1, k])
+                plt.imshow(input_and_examples[j][k], cmap = cmapimages)
+                plt.imshow(_standardize_image(corresponding_weights[j][k], clip_percentile), cmap = cmapexplanation, alpha = alpha)
+                plt.axis("off")
+            plt.show()
+
 
 class CosineDistanceFunction(DistanceMetric):
 
