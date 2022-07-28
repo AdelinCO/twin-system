@@ -19,20 +19,30 @@ def test_weights_extraction_function():
     when this function put them all at one.
     """ 
 
+    # Method parameters initialisation
     input_shape = (28, 28, 1)
     nb_labels = 10
 
+    # Data generation
     dataset, labels = generate_data(input_shape, nb_labels, 100)
     x, y = generate_data(input_shape, nb_labels, 1)
+
+    # Model generation
     model = generate_model(input_shape, nb_labels)
 
+    # Initialisation of weights_extraction_function and distance_function
+    # They will be used in CaseBasedExplainer initialisation
     weights_extraction_function = lambda inputs, targets: tf.ones(inputs.shape)
     distance_function = DistanceMetric.get_metric('euclidean')
+
+    # CaseBasedExplainer initialisation
     method = CaseBasedExplainer(model,
                                 dataset, labels,
                                 targets=None, batch_size=1,
                                 distance_function=distance_function,
                                 weights_extraction_function=weights_extraction_function)
+    
+    # test case dataset weigth
     assert almost_equal(method.case_dataset_weight, tf.ones(dataset.shape))
 
 
@@ -40,38 +50,38 @@ def test_neighbors_distance():
     """
     The function test every output of the explanation method 
     """
-    #Method parameters initialisation
+    # Method parameters initialisation
     input_shape = (3, 3, 1)
     nb_labels = 10
     nb_samples = 10
     nb_samples_test = 8
     k = 3
 
-    #Model Generation
-    model = generate_model(input_shape, nb_labels)
-
-    #Initialisation of weights_extraction_function et distance_function
-    #They will be used in CaseBasedExplainer initialisation
-    weights_extraction_function = lambda inputs, targets: tf.ones(inputs.shape)
-    distance_function = DistanceMetric.get_metric('euclidean')
-
-    #Dataset and labels creation
+    # Data generation
     matrix_train = tf.stack([i * tf.ones(input_shape) for i in range(nb_samples)])
     matrix_test = matrix_train[1:-1]
     labels_train = tf.range(nb_samples)
     labels_test = labels_train[1:-1]
 
-    #CaseBasedExplainer initialisation
+    # Model generation
+    model = generate_model(input_shape, nb_labels)
+
+    # Initialisation of weights_extraction_function and distance_function
+    # They will be used in CaseBasedExplainer initialisation
+    weights_extraction_function = lambda inputs, targets: tf.ones(inputs.shape)
+    distance_function = DistanceMetric.get_metric('euclidean')
+
+    # CaseBasedExplainer initialisation
     method = CaseBasedExplainer(model,
                                 matrix_train, labels_train,
                                 targets=None, batch_size=1,
                                 distance_function=distance_function,
                                 weights_extraction_function = weights_extraction_function)
     
-    #method explanation
+    # Method explanation
     examples, examples_distance, examples_weights, inputs_weights, examples_labels = method.explain(matrix_test, labels_test)
 
-    #test every outputs shape
+    # test every outputs shape
     assert examples.shape == (nb_samples_test, k) + input_shape
     assert examples_distance.shape == (nb_samples_test, k)
     assert examples_weights.shape == (nb_samples_test, k) + input_shape
@@ -79,17 +89,17 @@ def test_neighbors_distance():
     assert examples_labels.shape == (nb_samples_test, k)
 
     for i in range(len(labels_test)):
-        #test examples:
+        # test examples:
         assert almost_equal(examples[i][0], matrix_train[i+1])
         assert almost_equal(examples[i][1], matrix_train[i+2]) or almost_equal(examples[i][1], matrix_train[i])
         assert almost_equal(examples[i][2], matrix_train[i]) or almost_equal(examples[i][2], matrix_train[i+2])
 
-        #test examples_distance
+        # test examples_distance
         assert almost_equal(examples_distance[i][0], 0)
         assert almost_equal(examples_distance[i][1], sqrt(prod(input_shape)))
         assert almost_equal(examples_distance[i][2], sqrt(prod(input_shape)))
         
-        #test examples_labels
+        # test examples_labels
         assert almost_equal(examples_labels[i][0], labels_train[i+1])
         assert almost_equal(examples_labels[i][1], labels_train[i+2]) or almost_equal(examples_labels[i][1], labels_train[i])
         assert almost_equal(examples_labels[i][2], labels_train[i]) or almost_equal(examples_labels[i][2], labels_train[i+2])
@@ -106,90 +116,95 @@ def test_weights_attribution():
     """
     Function to test the weights attribution
     """
-    #Method parameters initialisation
+    # Method parameters initialisation
     input_shape = (3, 3, 1)
     nb_labels = 10
     nb_samples = 10
     nb_samples_test = 8
     k = 3
 
-    #Model Generation
-    model = generate_model(input_shape, nb_labels)
-
-    #Initialisation of weights_extraction_function et distance_function
-    #They will be used in CaseBasedExplainer initialisation
-    distance_function = DistanceMetric.get_metric('euclidean')
-
-    #Dataset and labels creation
+    # Data generation
     matrix_train = tf.stack([i * tf.ones(input_shape, dtype=tf.float32) for i in range(nb_samples)])
     matrix_test = matrix_train[1:-1]
     labels_train = tf.range(nb_samples, dtype=tf.float32)
     labels_test = labels_train[1:-1]
 
+    # Model generation
+    model = generate_model(input_shape, nb_labels)
+
+    # Initialisation of distance_function
+    # It will be used in CaseBasedExplainer initialisation
+    distance_function = DistanceMetric.get_metric('euclidean')
+
+    # CaseBasedExplainer initialisation
     method = CaseBasedExplainer(model,
                                 matrix_train, labels_train,
                                 targets=labels_train, batch_size=1,
                                 distance_function=distance_function,
                                 weights_extraction_function = weights_attribution)
 
+    # test case dataset weigth
     assert almost_equal(method.case_dataset_weight[:, 0, 0, 0], method.labels_train)
+    assert almost_equal(tf.reduce_sum(method.case_dataset_weight, axis=[1, 2, 3]), method.labels_train)
 
+    # Method explanation
     examples, examples_distance, examples_weights, inputs_weights, examples_labels = method.explain(matrix_test, labels_test)
 
-    #test examples weights
+    # test examples weights
     assert almost_equal(examples_weights[:, :, 0, 0, 0], examples_labels)
+    assert almost_equal(tf.reduce_sum(examples_weights, axis=[2, 3, 4]), examples_labels)
 
-    #test inputs weights
+    # test inputs weights
     assert almost_equal(inputs_weights[:, 0, 0, 0], labels_test)
+    assert almost_equal(tf.reduce_sum(inputs_weights, axis=[1, 2, 3]), labels_test)
 
 
 def test_tabular_inputs():
     """
-    Function to test tabular input in the method
+    Function to test the acceptation of tabular data input in the method
     """
-    #Method parameters initialisation
-    input_shape = (32, 32, 1)
-    nb_labels = 10
-    nb_samples = 100
-    #data_shape = (3, 3, 1)
+    # Method parameters initialisation
+    input_shape = (3,)
+    nb_labels = 3
+    nb_samples = 10
+    nb_inputs = 5
+    data_shape = input_shape
     k = 3
 
-    #Model Generation
+    # Data generation
+    dataset, targets = generate_data(data_shape, nb_labels, nb_samples)
+    dataset_train = dataset[:-nb_inputs]
+    dataset_test = dataset[-nb_inputs:]
+    targets_train = targets[:-nb_inputs]
+    targets_test = targets[-nb_inputs:]
+
+    # Model generation
     model = Sequential()
     model.add(Input(input_shape))
     model.add(Flatten())
-    model.add(Dense(10))
+    model.add(Dense(nb_labels))
 
-    #Initialisation of weights_extraction_function et distance_function
-    #They will be used in CaseBasedExplainer initialisation
+    # Initialisation of weights_extraction_function and distance_function
+    # They will be used in CaseBasedExplainer initialisation
     weights_extraction_function = lambda inputs, targets: tf.ones(inputs.shape)
     distance_function = DistanceMetric.get_metric('euclidean')
 
-    #Dataset and labels creation
-    matrix_train = tf.stack([i * tf.random.uniform(input_shape, minval=0, maxval=10, dtype=tf.float32) for i in range(nb_samples)])
-    matrix_test = matrix_train[1:-1]
-    labels_train = tf.range(nb_samples, dtype=tf.float32)
-    labels_test = labels_train[1:-1]
-
+    # CaseBasedExplainer initialisation
     method = CaseBasedExplainer(model,
-                                matrix_train, labels_train,
-                                targets=labels_train, batch_size=1,
+                                dataset_train, targets_train,
+                                targets=targets_train, batch_size=1,
                                 distance_function=distance_function,
-                                weights_extraction_function = weights_attribution)
+                                weights_extraction_function = weights_extraction_function)
 
-    examples, examples_distance, examples_weights, inputs_weights, examples_labels = method.explain(matrix_test, labels_test)
+    # Method explanation
+    examples, examples_distance, examples_weights, inputs_weights, examples_labels = method.explain(dataset_test, targets_test)
     
-    assert examples.shape == (nb_samples-2, k) + input_shape
-    print(examples.shape)
-
-    print("test fini et validé")  
-    
-
+    # test examples shape
+    assert examples.shape == (nb_inputs, k) + input_shape
 
 
 test_weights_extraction_function()
 test_neighbors_distance()
 test_weights_attribution()
 test_tabular_inputs()
-
 
