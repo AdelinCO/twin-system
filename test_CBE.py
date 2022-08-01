@@ -12,40 +12,6 @@ import xplique
 from xplique.types import Union
 
 
-def test_weights_extraction_function():
-    """
-    The input shape must be n, k, h, w, x
-    This function test that every weight be at one after calculating by the weight_extraction_function
-    when this function put them all at one.
-    """ 
-
-    # Method parameters initialisation
-    input_shape = (28, 28, 1)
-    nb_labels = 10
-
-    # Data generation
-    dataset, labels = generate_data(input_shape, nb_labels, 100)
-    x, y = generate_data(input_shape, nb_labels, 1)
-
-    # Model generation
-    model = generate_model(input_shape, nb_labels)
-
-    # Initialisation of weights_extraction_function and distance_function
-    # They will be used in CaseBasedExplainer initialisation
-    weights_extraction_function = lambda inputs, targets: tf.ones(inputs.shape)
-    distance_function = DistanceMetric.get_metric('euclidean')
-
-    # CaseBasedExplainer initialisation
-    method = CaseBasedExplainer(model,
-                                dataset, labels,
-                                targets=None, batch_size=1,
-                                distance_function=distance_function,
-                                weights_extraction_function=weights_extraction_function)
-    
-    # test case dataset weigth
-    assert almost_equal(method.case_dataset_weight, tf.ones(dataset.shape))
-
-
 def test_neighbors_distance():
     """
     The function test every output of the explanation method 
@@ -164,11 +130,11 @@ def test_tabular_inputs():
     Function to test the acceptation of tabular data input in the method
     """
     # Method parameters initialisation
-    input_shape = (3,)
+    data_shape = (3,)
+    input_shape = data_shape
     nb_labels = 3
-    nb_samples = 10
+    nb_samples = 20
     nb_inputs = 5
-    data_shape = input_shape
     k = 3
 
     # Data generation
@@ -194,16 +160,16 @@ def test_tabular_inputs():
                                 dataset_train, targets_train,
                                 targets=targets_train, batch_size=1,
                                 distance_function=distance_function,
-                                weights_extraction_function = weights_extraction_function)
+                                weights_extraction_function = weights_extraction_function,
+                                k=k)
 
     # Method explanation
     examples, examples_distance, examples_weights, inputs_weights, examples_labels = method.explain(dataset_test, targets_test)
-    
+   
     # test examples shape
     assert examples.shape == (nb_inputs, k) + input_shape
 
 
-test_weights_extraction_function()
 test_neighbors_distance()
 test_weights_attribution()
 test_tabular_inputs()
