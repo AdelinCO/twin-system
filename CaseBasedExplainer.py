@@ -18,8 +18,6 @@ from sklearn.neighbors import KDTree
 
 class CaseBasedExplainer():
     """
-    TODO
-    
     Used to compute the Case Based Explainer sytem, a twins sytem that use ANN and KNN with
     the same dataset.
     
@@ -41,15 +39,14 @@ class CaseBasedExplainer():
         """
         Parameters
         ----------
-
         model
-            The model from wich we want to obtain explanations
+            The model from wich we want to obtain explanations.
         case_dataset
             The dataset used to train the model, also use by the function to calcul the closest examples.
         labels_train
-            labels define by the dataset mnist
+            labels define by the dataset.
         targets
-            labels predict by the model from the dataset
+            labels predict by the model from the dataset.
         batch_size
             Number of pertubed samples to explain at once.
             Default = 16
@@ -64,7 +61,7 @@ class CaseBasedExplainer():
                     # outputs.shape == inputs.shape
                     return outputs
         k
-            Represante how many nearest neighbours you want to be return.
+            Represante how many nearest neighbours you want to be returns.
         """
         # set attributes
         self.model = model
@@ -91,7 +88,6 @@ class CaseBasedExplainer():
         
         # compute case dataset weights (used in distance)
         # the weight extraction function may need the predictions to extract the weights
-        #print(case_dataset.shape)
         case_dataset_weight = self.weights_extraction_function(case_dataset, targets)
         # for images, channels may disappear
         if len(case_dataset_weight.shape) != len(case_dataset.shape):
@@ -106,13 +102,34 @@ class CaseBasedExplainer():
         # create kdtree instance with weighted case dataset
         # will be called to estimate closest examples
         self.Knn = KDTree(weighted_case_dataset, metric=distance_function)
-        #print(weighted_case_dataset.shape)
-
         
     def extract_element_from_indices(self, 
                                      inputs: Union[tf.Tensor, np.ndarray],
                                      labels_train: np.ndarray,
                                      examples_indice: np.ndarray):
+        """
+        This function has to extract every example and weights from the dataset
+        by the indice calculate with de KNN query in the explain function 
+        
+        Parameters
+        ----------
+        inputs
+            Tensor or Array. Input samples to be explained.
+            Expected shape among (N,W), (N,T,W), (N,W,H,C).
+        labels_train
+            labels define by the dataset.
+        examples_indice
+            Represente the indice of the K nearust neighbours of the input.
+            
+        Returns
+        -------
+        examples
+            Represente the K nearust neighbours of the input.
+        examples_weights
+            features weight of the examples.
+        labels_examples
+            labels of the examples.
+        """
         all_examples = []
         all_weight_examples = []
         all_labels_examples = []
@@ -140,27 +157,35 @@ class CaseBasedExplainer():
                 inputs: Union[tf.Tensor, np.ndarray],
                 targets: Union[tf.Tensor, np.ndarray] = None):
         """
+        This function calculate the indice of the k closest example of the different inputs.
+        Call extract_element_from_indice to extract the examples from those indices.
+        
         Parameters
         ----------
         inputs
             Tensor or Array. Input samples to be explained.
-            Expected shape among (N,T,W), (N,W,H,C).
+            Expected shape among (N,W), (N,T,W), (N,W,H,C).
         targets
             Tensor or Array. Corresponding to the prediction of the samples by the model.
             shape: (n, nb_classes)
             Used by the `weights_extraction_function` if it is an Xplique attribution function,
-            For more details, please refer to the explain methods documentation   
+            For more details, please refer to the explain methods documentation.   
             
         Returns
         -------
         examples 
             Represente the K nearust neighbours of the input.
-        distance
+        examples_distance
             distance between the input and the examples.
-        weight
-            features weight of the inputs
+        examples_weight
+            features weight of the examples.
+        inputs_weights
+            features weight of the inputs.
+        examples_labels
+            labels of the examples.
         """
-        # have to put targets.all() if you put an argument to the function
+        
+        # verify targets parametre
         if targets is None:
             targets = self.model(inputs)
             nb_classes = targets.shape[1]
@@ -192,7 +217,7 @@ class CaseBasedExplainer():
     def show_result_images(self,
                            inputs: Union[tf.Tensor, np.ndarray],
                            examples: Union[tf.Tensor, np.ndarray],
-                           distance: float,
+                           examples_distance: float,
                            inputs_weights: np.ndarray,
                            examples_weights: np.ndarray,
                            indice_original: int,
@@ -203,21 +228,27 @@ class CaseBasedExplainer():
                            cmapexplanation: Optional[str] = "coolwarm",
                            alpha: Optional[float] = 0.5):
         """
+        This function is for image data, it show the returns of the explain function.
+        
         Parameters
         ---------
         inputs
             Tensor or Array. Input samples to be show next to examples.
-            Expected shape among (N,T,W), (N,W,H,C).
-        distance
+            Expected shape among (N,W), (N,T,W), (N,W,H,C).
+        examples
+            Represente the K nearust neighbours of the input.
+        examples_distance
             Distance between input data and examples.    
-        weight
-            features weight of the inputs 
+        inputs_weights
+            features weight of the inputs.
+        examples_weight
+            features weight of the examples. 
         indice_original
-            Represente the indice of the inputs to show the true labels
-        labels_train
-            Corresponding to the train labels dataset   
+            Represente the indice of the inputs to show the true labels.
+        examples_labels
+            labels of the examples.   
         labels_test
-            Corresponding to the test labels dataset
+            Corresponding to labels of the dataset test.
         clip_percentile
             Percentile value to use if clipping is needed, e.g a value of 1 will perform a clipping
             between percentile 1 and 99. This parameter allows to avoid outliers  in case of too extreme values.
@@ -256,16 +287,16 @@ class CaseBasedExplainer():
         plt.rcParams["figure.figsize"] = [20, 10]
         
         
-        #loop to organize and show all results
+        # loop to organize and show all results
         for j in range(np.asarray(input_and_examples).shape[0]):
             fig = plt.figure()
-            gs = fig.add_gridspec(2, self.k_neighbors + 1)
+            gs = fig.add_gridspec(2, input_and_examples.shape[1])
             for k in range(len(input_and_examples[j])):
                 ax = fig.add_subplot(gs[0, k])
                 if k == 0:
-                    plt.title(f'Original image\nGround Truth: {labels_test[indice_original[j]]}\nPredict: {predicted_labels[j][k]}')
+                    plt.title(f'Original image\nGround Truth: {labels_test[indice_original[j]]}\nPrediction: {predicted_labels[j][k]}')
                 else:
-                    plt.title(f'K-nearest neighbours\nGround Truth: {examples_labels[j][k-1]}\nPredict: {predicted_labels[j][k]}\nDistance: {round(distance[j][k-1], 2)}')
+                    plt.title(f'Examples\nGround Truth: {examples_labels[j][k-1]}\nPrediction: {predicted_labels[j][k]}\nDistance: {round(examples_distance[j][k-1], 2)}')
                 plt.imshow(input_and_examples[j][k], cmap=cmapimages)
                 plt.axis("off")
                 ax2 = fig.add_subplot(gs[1, k])
@@ -278,7 +309,7 @@ class CaseBasedExplainer():
     def show_result_tabular(self,
                             inputs: Union[tf.Tensor, np.ndarray],
                             examples: Union[tf.Tensor, np.ndarray],
-                            distance: float,
+                            examples_distance: float,
                             inputs_weights: np.ndarray,
                             examples_weights: np.ndarray,
                             indice_original: int,
@@ -286,21 +317,29 @@ class CaseBasedExplainer():
                             labels_test: np.ndarray,
                             show_values: bool=False):
         """
+        This function is for image data, it show the returns of the explain function.
+        
         Parameters
         ---------
         inputs
             Tensor or Array. Input samples to be show next to examples.
-            Expected shape among (N,T,W), (N,W,H,C).
-        distance
+            Expected shape among (N,W), (N,T,W), (N,W,H,C).
+        examples
+            Represente the K nearust neighbours of the input.
+        examples_distance
             Distance between input data and examples.    
-        weight
-            features weight of the inputs 
+        inputs_weights
+            features weight of the inputs.
+        examples_weight
+            features weight of the examples. 
         indice_original
-            Represente the indice of the inputs to show the true labels
-        labels_train
-            Corresponding to the train labels dataset   
+            Represente the indice of the inputs to show the true labels.
+        examples_labels
+            labels of the examples.   
         labels_test
-            Corresponding to the test labels dataset
+            Corresponding to labels of the dataset test.
+        show_values
+            boolean default at False, to show the values of examples.
         """
         
         # Initialize 'input_and_examples' and 'corresponding_weights' that they
@@ -317,12 +356,15 @@ class CaseBasedExplainer():
             predicted = self.model(samples)
             predicted = tf.argmax(predicted, axis=1)
             predicted_labels.append(predicted)
-            
+        
+        # apply argmax function to labels
         labels_test = tf.argmax(labels_test, axis=1)
         examples_labels = tf.argmax(examples_labels, axis=1)
         
-        values_string = "" 
+        # define values_string if show_values is at None
+        values_string = ""
         
+        # loop to organize and show all results
         for i in range(input_and_examples.shape[0]):
             for j in range(input_and_examples.shape[1]):
                 if show_values == True:
@@ -332,5 +374,6 @@ class CaseBasedExplainer():
                 else:
                     print(f'\tExamples: {j}\t\tDistance: {round(examples_distance[i][j-1], 2)}\t\tGround Truth: {examples_labels[i][j-1]}\t\tPrediction: {predicted_labels[i][j]}' + values_string)
             print('\n')
+        
         
         
